@@ -1,6 +1,6 @@
 import { createIcons, CalendarDays, ChevronLeft, ChevronRight, Check, X, Settings2, ChartNoAxesColumn, Download, Upload, ArrowUpRight, Plus, RotateCcw, CircleCheck, RefreshCw } from 'lucide';
 import { registerSW } from 'virtual:pwa-register';
-import { STORAGE_KEY, emptyLedger, localDateKey, parseRate, validateLedger, saveDay, monthSummary } from './ledger.js';
+import { STORAGE_KEY, emptyLedger, localDateKey, parseRate, validateLedger, saveDay, monthSummary, rangeRecords, rangeSummary } from './ledger.js';
 import './style.css';
 
 const icons = { CalendarDays, ChevronLeft, ChevronRight, Check, X, Settings2, ChartNoAxesColumn, Download, Upload, ArrowUpRight, Plus, RotateCcw, CircleCheck, RefreshCw };
@@ -8,6 +8,9 @@ const app = document.querySelector('#app');
 const today = localDateKey();
 let month = today.slice(0, 7);
 let view = 'calendar';
+let reportMode = 'month';
+let rangeStart = `${month}-01`;
+let rangeEnd = today;
 let ledger = emptyLedger();
 let storageError = '';
 let rawBackup = '';
@@ -48,9 +51,8 @@ function monthControl() {
   return `<div class="month-control"><button class="icon-button" data-action="previous" aria-label="上个月" title="上个月">${icon('chevron-left')}</button><label class="month-label"><span>${monthLabel()}</span><input aria-label="选择月份" type="month" id="month-picker" value="${month}" min="1900-01" max="9999-12"></label><button class="icon-button" data-action="next" aria-label="下个月" title="下个月">${icon('chevron-right')}</button></div>`;
 }
 
-function summary() {
-  const totals = monthSummary(ledger, month);
-  return `<section class="summary" aria-label="本月统计"><div class="amount"><span class="eyebrow">${monthLabel()} · 应付托费</span><div class="amount-value"><span>¥</span>${money(totals.total)}</div><span class="subtle">按已记录的出勤日计费</span></div><div class="counts"><div><span class="count-dot present-dot"></span><span>已上托班</span><strong>${totals.present}<small> 天</small></strong></div><div><span class="count-dot absent-dot"></span><span>未上托班</span><strong>${totals.absent}<small> 天</small></strong></div></div></section><div class="rate-strip"><span>新记录单价 <strong>¥${money(ledger.dailyRate)}</strong> / 天</span><button class="text-button" data-action="show-settings" aria-label="修改每日托费">${icon('settings-2')} 修改</button></div>`;
+function summary(totals = monthSummary(ledger, month), label = monthLabel(), custom = false) {
+  return `<section class="summary ${custom ? 'range-summary' : ''}" aria-label="${custom ? '周期统计' : '本月统计'}"><div class="amount"><span class="eyebrow">${label} · 应付托费</span><div class="amount-value"><span>¥</span>${money(totals.total)}</div><span class="subtle">${custom ? '含起止日期，按已记录的出勤日计费' : '按已记录的出勤日计费'}</span></div><div class="counts"><div><span class="count-dot present-dot"></span><span>已上托班</span><strong>${totals.present}<small> 天</small></strong></div><div><span class="count-dot absent-dot"></span><span>未上托班</span><strong>${totals.absent}<small> 天</small></strong></div></div></section><div class="rate-strip"><span>新记录单价 <strong>¥${money(ledger.dailyRate)}</strong> / 天</span><button class="text-button" data-action="show-settings" aria-label="修改每日托费">${icon('settings-2')} 修改</button></div>`;
 }
 
 function calendar() {
@@ -70,14 +72,27 @@ function calendar() {
   return `<section class="calendar-section"><div class="section-heading"><h2>出勤日历</h2>${monthControl()}</div><div class="weekdays">${['一', '二', '三', '四', '五', '六', '日'].map((day) => `<span>${day}</span>`).join('')}</div><div class="calendar-grid">${cells}</div><div class="calendar-footer"><div class="legend"><span><b class="present-dot"></b>已上</span><span><b class="absent-dot"></b>未上</span><span><b class="unknown-dot"></b>未记录</span></div><button class="text-button" data-action="this-month">回到本月 ${icon('rotate-ccw')}</button></div></section>`;
 }
 
-function recordList(limit = Infinity) {
-  const records = monthRecords().slice(0, limit);
+function recordList(limit = Infinity, entries = monthRecords(), custom = false) {
+  const records = entries.slice(0, limit);
+  if (!records.length && custom) return `<div class="empty-state">${icon('calendar-days')}<h3>这个周期还没有记录</h3><p>暂无出勤和费用。</p></div>`;
   if (!records.length) return `<div class="empty-state">${icon('calendar-days')}<h3>这个月还没有记录</h3><p>${month === today.slice(0, 7) ? '今天的托班时光，从这里记下。' : '暂无出勤和费用。'}</p>${month === today.slice(0, 7) ? `<button class="primary-button" data-date="${today}">${icon('plus')} 记录今天</button>` : ''}</div>`;
-  return `<div class="record-list">${records.map(([date, record]) => `<button class="record-row" data-date="${date}"><span class="record-icon ${record.status}">${icon(record.status === 'present' ? 'check' : 'x')}</span><span class="record-description"><strong>${Number(date.slice(5, 7))} 月 ${Number(date.slice(8))} 日 <small>星期${'日一二三四五六'[new Date(`${date}T12:00:00`).getDay()]}</small></strong><span>${escapeHTML(record.note || (record.status === 'present' ? '已上托班' : '未上托班'))}</span></span><span class="record-amount ${record.status === 'absent' ? 'muted' : ''}">${record.status === 'present' ? `¥${money(record.rate)}` : '不计费'}</span>${icon('chevron-right')}</button>`).join('')}</div>`;
+  return `<div class="record-list">${records.map(([date, record]) => `<button class="record-row" data-date="${date}"><span class="record-icon ${record.status}">${icon(record.status === 'present' ? 'check' : 'x')}</span><span class="record-description"><strong>${custom ? date : `${Number(date.slice(5, 7))} 月 ${Number(date.slice(8))} 日`} <small>星期${'日一二三四五六'[new Date(`${date}T12:00:00`).getDay()]}</small></strong><span>${escapeHTML(record.note || (record.status === 'present' ? '已上托班' : '未上托班'))}</span></span><span class="record-amount ${record.status === 'absent' ? 'muted' : ''}">${record.status === 'present' ? `¥${money(record.rate)}` : '不计费'}</span>${icon('chevron-right')}</button>`).join('')}</div>`;
+}
+
+function billPeriod() {
+  if (reportMode === 'range') return {
+    totals: rangeSummary(ledger, rangeStart, rangeEnd),
+    records: rangeRecords(ledger, rangeStart, rangeEnd),
+    label: `${rangeStart} 至 ${rangeEnd}`,
+    fileLabel: `${rangeStart}_${rangeEnd}`,
+  };
+  return { totals: monthSummary(ledger, month), records: monthRecords(), label: monthLabel(), fileLabel: month };
 }
 
 function reports() {
-  return `<section class="report-heading"><div><span class="eyebrow">MONTHLY BILL</span><h1>月度账单</h1></div>${monthControl()}</section>${summary()}<section class="records-section"><div class="section-heading"><h2>每日明细 <span class="badge">${monthRecords().length}</span></h2><button class="text-button" data-action="csv">${icon('download')} 导出账单</button></div>${recordList()}</section>`;
+  const custom = reportMode === 'range';
+  const period = billPeriod();
+  return `<section class="report-heading"><div><span class="eyebrow">${custom ? 'PERIOD BILL' : 'MONTHLY BILL'}</span><h1>${custom ? '周期账单' : '月度账单'}</h1></div>${custom ? '' : monthControl()}</section><div class="report-modes" role="group" aria-label="账单统计方式"><button data-report-mode="month" aria-pressed="${!custom}">${icon('calendar-days')} 按月统计</button><button data-report-mode="range" aria-pressed="${custom}">${icon('chart-no-axes-column')} 自定义周期</button></div>${custom ? `<form id="range-form" class="date-range-form"><label class="field">开始日期<input type="date" name="start" required min="1900-01-01" max="9999-12-31" value="${rangeStart}"></label><label class="field">结束日期<input type="date" name="end" required min="1900-01-01" max="9999-12-31" value="${rangeEnd}"></label><button class="primary-button" type="submit">${icon('chart-no-axes-column')} 统计</button><p class="form-error" role="alert"></p></form>` : ''}${summary(period.totals, period.label, custom)}<section class="records-section"><div class="section-heading"><h2>每日明细 <span class="badge">${period.records.length}</span></h2><button class="text-button" data-action="csv">${icon('download')} 导出账单</button></div>${recordList(Infinity, period.records, custom)}</section>`;
 }
 
 function settings() {
@@ -138,6 +153,7 @@ app.addEventListener('click', async (event) => {
   if (!target) return;
   if (target.matches('a.brand')) { event.preventDefault(); view = 'calendar'; render(); return; }
   if (target.dataset.view) { view = target.dataset.view; render(); window.scrollTo(0, 0); return; }
+  if (target.dataset.reportMode) { reportMode = target.dataset.reportMode; render(); return; }
   if (target.dataset.date) { openDay(target.dataset.date); return; }
   try {
     switch (target.dataset.action) {
@@ -157,9 +173,10 @@ app.addEventListener('click', async (event) => {
       case 'reset': if (confirm('确认清空异常数据？请先导出原始数据，重置后无法撤销。')) { persist(emptyLedger(), true); render(); toast('已重置'); } break;
       case 'import': document.querySelector('#import-file').click(); break;
       case 'csv': {
-        const totals = monthSummary(ledger, month);
-        const rows = [['日期', '状态', '费用（元）', '备注'], ...monthRecords().reverse().map(([date, record]) => [date, record.status === 'present' ? '已上' : '未上', record.status === 'present' ? (record.rate / 100).toFixed(2) : '0.00', record.note]), ['合计', `${totals.present} 天出勤`, (totals.total / 100).toFixed(2), '']];
-        download('\ufeff' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n'), `托班账单-${month}.csv`, 'text/csv;charset=utf-8'); break;
+        const period = billPeriod();
+        const rows = [['日期', '状态', '费用（元）', '备注'], ...period.records.slice().reverse().map(([date, record]) => [date, record.status === 'present' ? '已上' : '未上', record.status === 'present' ? (record.rate / 100).toFixed(2) : '0.00', record.note]), ['合计', `${period.totals.present} 天出勤`, (period.totals.total / 100).toFixed(2), '']];
+        if (reportMode === 'range') rows.unshift(['统计周期', period.label, '', '']);
+        download('\ufeff' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n'), `托班账单-${period.fileLabel}.csv`, 'text/csv;charset=utf-8'); break;
       }
       case 'update': pendingUpdate?.(true); break;
     }
@@ -195,6 +212,13 @@ app.addEventListener('submit', (event) => {
       persist(saveDay(ledger, form.dataset.key, status, rate, data.get('note')));
       document.querySelector('#day-dialog').close();
       render(); toast('这一天，记好了');
+    } else if (form.id === 'range-form') {
+      const start = data.get('start');
+      const end = data.get('end');
+      rangeSummary(ledger, start, end);
+      rangeStart = start;
+      rangeEnd = end;
+      render();
     } else if (form.id === 'settings-form') {
       persist({ ...ledger, childName: data.get('childName').trim(), dailyRate: parseRate(data.get('dailyRate')) });
       render(); toast('设置已保存');

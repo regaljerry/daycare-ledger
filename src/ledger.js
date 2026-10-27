@@ -50,8 +50,23 @@ export function saveDay(ledger, key, status, rate, note = '') {
 }
 
 export function monthSummary(ledger, month) {
-  return Object.entries(ledger.records).reduce((summary, [date, record]) => {
-    if (!date.startsWith(`${month}-`)) return summary;
+  return summarizeRecords(Object.entries(ledger.records).filter(([date]) => date.startsWith(`${month}-`)));
+}
+
+export function rangeRecords(ledger, start, end) {
+  if (!validDateKey(start) || !validDateKey(end)) throw new Error('请选择有效的开始日期和结束日期');
+  if (start > end) throw new Error('开始日期不能晚于结束日期');
+  return Object.entries(ledger.records)
+    .filter(([date]) => date >= start && date <= end)
+    .sort(([first], [second]) => second.localeCompare(first));
+}
+
+export function rangeSummary(ledger, start, end) {
+  return summarizeRecords(rangeRecords(ledger, start, end));
+}
+
+function summarizeRecords(records) {
+  return records.reduce((summary, [, record]) => {
     if (record.status === 'present') {
       summary.present += 1;
       summary.total += record.rate;

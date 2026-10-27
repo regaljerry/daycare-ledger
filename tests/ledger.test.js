@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyLedger, parseRate, saveDay, monthSummary, validateLedger, validDateKey } from '../src/ledger.js';
+import { emptyLedger, parseRate, saveDay, monthSummary, rangeRecords, rangeSummary, validateLedger, validDateKey } from '../src/ledger.js';
 
 test('only present days are charged and other months are excluded', () => {
   let ledger = emptyLedger();
@@ -32,4 +32,25 @@ test('backup validation rejects impossible dates and invalid records', () => {
   assert.throws(() => validateLedger({ ...emptyLedger(), records: { '2026-02-30': { status: 'present', rate: 1, note: '' } } }));
   assert.throws(() => saveDay(emptyLedger(), '2026-10-01', 'invalid', 100));
   assert.throws(() => saveDay(emptyLedger(), '2026-10-01', 'present', -1));
+});
+
+test('custom periods include both endpoints across months and years with historical prices', () => {
+  let ledger = emptyLedger();
+  ledger = saveDay(ledger, '2025-12-30', 'present', 9999);
+  ledger = saveDay(ledger, '2025-12-31', 'present', 10001);
+  ledger = saveDay(ledger, '2026-01-01', 'absent', 10001);
+  ledger = saveDay(ledger, '2026-01-02', 'present', 12550);
+  ledger = saveDay(ledger, '2026-01-03', 'present', 9999);
+  ledger.dailyRate = 20000;
+  assert.deepEqual(rangeSummary(ledger, '2025-12-31', '2026-01-02'), { present: 2, absent: 1, total: 22551 });
+  assert.deepEqual(rangeRecords(ledger, '2025-12-31', '2026-01-02').map(([date]) => date), ['2026-01-02', '2026-01-01', '2025-12-31']);
+  assert.deepEqual(rangeSummary(ledger, '2026-01-02', '2026-01-02'), { present: 1, absent: 0, total: 12550 });
+  assert.deepEqual(rangeSummary(ledger, '2026-02-01', '2026-02-28'), { present: 0, absent: 0, total: 0 });
+});
+
+test('custom periods reject missing, impossible and reversed dates', () => {
+  for (const [start, end] of [['', '2026-01-02'], ['2026-01-01', ''], ['2026-02-30', '2026-03-01'], ['2026-01-02', '2026-01-01']]) {
+    assert.throws(() => rangeSummary(emptyLedger(), start, end));
+    assert.throws(() => rangeRecords(emptyLedger(), start, end));
+  }
 });

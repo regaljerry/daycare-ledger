@@ -87,3 +87,64 @@ test('corrupt local data is not silently overwritten', async ({ page }) => {
   expect(await page.evaluate((storageKey) => localStorage.getItem(storageKey), key)).toBe('{broken');
   await expect(page.locator('#day-dialog')).not.toBeVisible();
 });
+
+test('custom billing periods filter inclusive dates, export matching totals and preserve monthly bills', async ({ page }) => {
+  await page.evaluate(({ storageKey, currentDate }) => localStorage.setItem(storageKey, JSON.stringify({
+    version: 1, childName: '', dailyRate: 20000,
+    records: {
+      '2025-12-30': { status: 'present', rate: 9999, note: 'outside-before' },
+      '2025-12-31': { status: 'present', rate: 10001, note: 'start-boundary' },
+      '2026-01-01': { status: 'absent', rate: 10001, note: 'absent' },
+      '2026-01-02': { status: 'present', rate: 12550, note: 'end-boundary' },
+      '2026-01-03': { status: 'present', rate: 9999, note: 'outside-after' },
+      [currentDate]: { status: 'present', rate: 6543, note: 'current-month' },
+    },
+  })), { storageKey: key, currentDate: date });
+  await page.reload();
+  await page.getByRole('button', { name: '账单', exact: true }).click();
+  await expect(page.locator('.amount-value')).toContainText('65.43');
+  await page.getByRole('button', { name: '自定义周期', exact: true }).click();
+  await page.getByLabel('开始日期').fill('2025-12-31');
+  await page.getByLabel('结束日期').fill('2026-01-02');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await expect(page.locator('.amount-value')).toContainText('225.51');
+  await expect(page.locator('.record-row')).toHaveCount(3);
+  await expect(page.locator('.counts')).toContainText('2 天');
+  await expect(page.locator('.counts')).toContainText('1 天');
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出账单' }).click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toContain('2025-12-31_2026-01-02.csv');
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  const csv = Buffer.concat(chunks).toString('utf8');
+  expect(csv).toContain('2025-12-31 至 2026-01-02');
+  expect(csv).toContain('225.51');
+  expect(csv).toContain('start-boundary');
+  expect(csv).toContain('end-boundary');
+  expect(csv).not.toContain('outside-before');
+  expect(csv).not.toContain('outside-after');
+  await page.getByLabel('开始日期').fill('2026-01-02');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await expect(page.locator('.amount-value')).toContainText('125.50');
+  await expect(page.locator('.record-row')).toHaveCount(1);
+  await page.getByLabel('开始日期').fill('2026-02-01');
+  await page.getByLabel('结束日期').fill('2026-02-28');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await expect(page.locator('.amount-value')).toContainText('0.00');
+  await expect(page.getByRole('heading', { name: '这个周期还没有记录' })).toBeVisible();
+  await page.getByLabel('开始日期').fill('2026-03-01');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await expect(page.locator('#range-form [role="alert"]')).toContainText('开始日期不能晚于结束日期');
+  await page.getByRole('button', { name: '按月统计', exact: true }).click();
+  await expect(page.locator('.amount-value')).toContainText('65.43');
+  await expect(page.getByRole('heading', { name: '月度账单' })).toBeVisible();
+  await page.getByRole('button', { name: '自定义周期', exact: true }).click();
+  await expect(page.getByLabel('开始日期')).toHaveValue('2026-02-01');
+  await expect(page.getByLabel('结束日期')).toHaveValue('2026-02-28');
+});
