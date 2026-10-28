@@ -1,6 +1,6 @@
 import { createIcons, CalendarDays, ChevronLeft, ChevronRight, Check, X, Settings2, ChartNoAxesColumn, Download, Upload, ArrowUpRight, Plus, RotateCcw, CircleCheck, RefreshCw } from 'lucide';
 import { registerSW } from 'virtual:pwa-register';
-import { STORAGE_KEY, emptyLedger, localDateKey, parseRate, validateLedger, saveDay, monthSummary, rangeRecords, rangeSummary } from './ledger.js';
+import { STORAGE_KEY, emptyLedger, localDateKey, validDateKey, parseRate, validateLedger, saveDay, monthSummary, rangeRecords, rangeSummary } from './ledger.js';
 import './style.css';
 
 const icons = { CalendarDays, ChevronLeft, ChevronRight, Check, X, Settings2, ChartNoAxesColumn, Download, Upload, ArrowUpRight, Plus, RotateCcw, CircleCheck, RefreshCw };
@@ -8,9 +8,10 @@ const app = document.querySelector('#app');
 const today = localDateKey();
 let month = today.slice(0, 7);
 let view = 'calendar';
-let reportMode = 'month';
-let rangeStart = `${month}-01`;
-let rangeEnd = today;
+const rangeStartKey = `${STORAGE_KEY}-range-start`;
+let reportMode = 'range';
+let rangeStart = readRangeStart();
+let rangeEnd = rangeStart > today ? rangeStart : today;
 let ledger = emptyLedger();
 let storageError = '';
 let rawBackup = '';
@@ -29,6 +30,14 @@ const icon = (name, className = '') => `<i data-lucide="${name}" class="${classN
 const money = (cents) => (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const monthLabel = () => `${Number(month.slice(0, 4))} 年 ${Number(month.slice(5))} 月`;
 const monthRecords = () => Object.entries(ledger.records).filter(([date]) => date.startsWith(`${month}-`)).sort(([first], [second]) => second.localeCompare(first));
+
+function readRangeStart() {
+  try {
+    const saved = localStorage.getItem(rangeStartKey);
+    if (validDateKey(saved) && saved >= '1900-01-01' && saved <= '9999-12-31') return saved;
+  } catch {}
+  return `${month}-01`;
+}
 
 function toast(message) {
   const element = document.querySelector('#toast');
@@ -104,7 +113,7 @@ function readBackupDate() {
 }
 
 function render() {
-  app.innerHTML = `<div class="app-shell"><header class="topbar"><a class="brand" href="#" aria-label="托班小记首页">${icon('calendar-days')}<span>托班小记<small>DAY BY DAY</small></span></a><span class="local-label"><span></span>本机账本</span></header>${storageError ? `<div class="error-banner" role="alert">${escapeHTML(storageError)}<button data-action="show-settings">处理数据</button></div>` : ''}${pendingUpdate ? `<div class="update-banner">新版本已就绪<button data-action="update">更新 ${icon('refresh-cw')}</button></div>` : ''}<main>${view === 'calendar' ? `<section class="page-heading home-heading"><div><span class="eyebrow">${escapeHTML(ledger.childName ? `${ledger.childName}的成长日常` : '孩子的成长日常')}</span><h1>小小日常，<br class="mobile-break">认真记下<span class="heading-period">。</span></h1></div><button class="primary-button today-button" data-date="${today}">${icon('plus')} 记录今天</button></section>${summary()}${calendar()}<section class="records-section"><div class="section-heading"><h2>最近记录</h2><button class="text-button" data-action="show-reports">月度账单 ${icon('arrow-up-right')}</button></div>${recordList(4)}</section>` : view === 'reports' ? reports() : settings()}</main><nav class="bottom-nav" aria-label="主导航">${[['calendar', 'calendar-days', '日历'], ['reports', 'chart-no-axes-column', '账单'], ['settings', 'settings-2', '设置']].map(([key, symbol, label]) => `<button data-view="${key}" class="${view === key ? 'active' : ''}" ${view === key ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></button>`).join('')}</nav></div><dialog id="day-dialog" aria-labelledby="day-title"></dialog>`;
+  app.innerHTML = `<div class="app-shell"><header class="topbar"><a class="brand" href="#" aria-label="托班小记首页">${icon('calendar-days')}<span>托班小记<small>DAY BY DAY</small></span></a><span class="local-label"><span></span>本机账本</span></header>${storageError ? `<div class="error-banner" role="alert">${escapeHTML(storageError)}<button data-action="show-settings">处理数据</button></div>` : ''}${pendingUpdate ? `<div class="update-banner">新版本已就绪<button data-action="update">更新 ${icon('refresh-cw')}</button></div>` : ''}<main>${view === 'calendar' ? `<section class="page-heading home-heading"><div><span class="eyebrow">${escapeHTML(ledger.childName ? `${ledger.childName}的成长日常` : '孩子的成长日常')}</span><h1>小小日常，<br class="mobile-break">认真记下<span class="heading-period">。</span></h1></div><button class="primary-button today-button" data-date="${today}">${icon('plus')} 记录今天</button></section>${summary()}${calendar()}<section class="records-section"><div class="section-heading"><h2>最近记录</h2><button class="text-button" data-action="show-reports">查看账单 ${icon('arrow-up-right')}</button></div>${recordList(4)}</section>` : view === 'reports' ? reports() : settings()}</main><nav class="bottom-nav" aria-label="主导航">${[['calendar', 'calendar-days', '日历'], ['reports', 'chart-no-axes-column', '账单'], ['settings', 'settings-2', '设置']].map(([key, symbol, label]) => `<button data-view="${key}" class="${view === key ? 'active' : ''}" ${view === key ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></button>`).join('')}</nav></div><dialog id="day-dialog" aria-labelledby="day-title"></dialog>`;
   createIcons({ icons });
 }
 
@@ -218,6 +227,8 @@ app.addEventListener('submit', (event) => {
       rangeSummary(ledger, start, end);
       rangeStart = start;
       rangeEnd = end;
+      try { localStorage.setItem(rangeStartKey, start); }
+      catch { toast('统计已更新，但开始日期无法保存，重新打开后将使用默认日期'); }
       render();
     } else if (form.id === 'settings-form') {
       persist({ ...ledger, childName: data.get('childName').trim(), dailyRate: parseRate(data.get('dailyRate')) });

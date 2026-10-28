@@ -102,6 +102,7 @@ test('custom billing periods filter inclusive dates, export matching totals and 
   })), { storageKey: key, currentDate: date });
   await page.reload();
   await page.getByRole('button', { name: '账单', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '周期账单' })).toBeVisible();
   await expect(page.locator('.amount-value')).toContainText('65.43');
   await page.getByRole('button', { name: '自定义周期', exact: true }).click();
   await page.getByLabel('开始日期').fill('2025-12-31');
@@ -147,4 +148,45 @@ test('custom billing periods filter inclusive dates, export matching totals and 
   await page.getByRole('button', { name: '自定义周期', exact: true }).click();
   await expect(page.getByLabel('开始日期')).toHaveValue('2026-02-01');
   await expect(page.getByLabel('结束日期')).toHaveValue('2026-02-28');
+});
+
+test('billing defaults to a custom period and remembers the last valid submitted start date', async ({ page, context }) => {
+  await page.getByRole('button', { name: '查看账单', exact: true }).click();
+  await expect(page.getByRole('button', { name: '自定义周期', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('开始日期')).toHaveValue(`${date.slice(0, 7)}-01`);
+  await expect(page.getByLabel('结束日期')).toHaveValue(date);
+  await page.getByLabel('开始日期').fill('2025-12-31');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await page.getByLabel('开始日期').fill('2026-01-03');
+  await page.getByLabel('结束日期').fill('2026-01-02');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await expect(page.locator('#range-form [role="alert"]')).toContainText('开始日期不能晚于结束日期');
+  await page.getByRole('button', { name: '按月统计', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '账单', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '周期账单' })).toBeVisible();
+  await expect(page.getByLabel('开始日期')).toHaveValue('2025-12-31');
+  await expect(page.getByLabel('结束日期')).toHaveValue(date);
+  const reopened = await context.newPage();
+  await reopened.goto('/');
+  await reopened.getByRole('button', { name: '账单', exact: true }).click();
+  await expect(reopened.getByLabel('开始日期')).toHaveValue('2025-12-31');
+  await reopened.close();
+});
+
+test('invalid saved start dates fall back safely and future starts keep the period valid', async ({ page }) => {
+  for (const saved of ['invalid', '2026-02-30', '1899-12-31']) {
+    await page.evaluate(({ storageKey, value }) => localStorage.setItem(`${storageKey}-range-start`, value), { storageKey: key, value: saved });
+    await page.reload();
+    await page.getByRole('button', { name: '账单', exact: true }).click();
+    await expect(page.getByLabel('开始日期')).toHaveValue(`${date.slice(0, 7)}-01`);
+    await expect(page.locator('.amount-value')).toContainText('0.00');
+  }
+  await page.getByLabel('开始日期').fill('2099-01-01');
+  await page.getByLabel('结束日期').fill('2099-01-02');
+  await page.getByRole('button', { name: '统计', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '账单', exact: true }).click();
+  await expect(page.getByLabel('开始日期')).toHaveValue('2099-01-01');
+  await expect(page.getByLabel('结束日期')).toHaveValue('2099-01-01');
 });
